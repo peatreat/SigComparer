@@ -1,6 +1,10 @@
+#include <Windows.h>
 #include <iostream>
 #include <string>
 #include <filesystem>
+#include <unordered_map>
+#include <fstream>
+#include <queue>
 
 using namespace std;
 
@@ -14,9 +18,9 @@ enum class flag_e {
 };
 
 flag_e get_flag(char* flag) {
-    if (flag == "-h" || flag == "-help") return flag_e::HELP;
-    if (flag == "-s" || flag == "-size") return flag_e::SIG_SIZE;
-    if (flag == "-m" || flag == "-mode") return flag_e::MODE;
+    if (!strcmp(flag, "-h") || !strcmp(flag, "-help")) return flag_e::HELP;
+    if (!strcmp(flag, "-s") || !strcmp(flag, "-size")) return flag_e::SIG_SIZE;
+    if (!strcmp(flag, "-m") || !strcmp(flag, "-mode")) return flag_e::MODE;
     return flag_e::ERR;
 }
 
@@ -25,7 +29,8 @@ int handle_flag(flag_e& flag, char** argv, int& i) {
     case flag_e::HELP: {
         cout << "-s [Scan Size of each Sig (Default: 8 bytes)]"
             << endl << "-m [Mode {0 for normal, 1 for async} (Default: 0)]"
-            << endl << "Usage: sigcomparer.exe [-m 0:1] [-s 1-64] file1.ext file2.ext";
+            << endl << "Usage: sigcomparer.exe [-m 0:1] [-s 1-64] file1.ext file2.ext"
+            << endl;
         break;
     }
 
@@ -51,7 +56,7 @@ int handle_flag(flag_e& flag, char** argv, int& i) {
 void handle_command_line(int argc, char** argv, int& sig_size, int& mode, char** files) {
     int file_count = 0;
 
-    for (int i = 0; i < argc; i++) {
+    for (int i = 1; i < argc; i++) {
         if (argv[i][0] == '-') {
             flag_e flag = get_flag(argv[i]);
 
@@ -96,14 +101,21 @@ void handle_command_line(int argc, char** argv, int& sig_size, int& mode, char**
     }
 }
 
-int sig_compare(char** files, int& mode, int& sig_size, int& matches, int& total_sigs) {
-    char* smallest_file = nullptr;
+int sig_compare(char** files, int& mode, int& sig_size, int& total_sigs) {
+    Sleep(5000);
+    int matches = 0;
+
+    int smallest_file = -1;
     uintmax_t smallest_sz = 0;
+
     for (int i = 0; i < MAX_FILE_COUNT; i++) {
+        if (!filesystem::exists(files[i]))
+            throw runtime_error(string("ERR: File does not exist ") + files[i]);
+
         uintmax_t cur_sz = filesystem::file_size(files[i]);
 
-        if (!smallest_file || cur_sz < smallest_sz) {
-            smallest_file = files[i];
+        if (smallest_file == -1 || cur_sz < smallest_sz) {
+            smallest_file = i;
             smallest_sz = cur_sz;
         }
     }
@@ -112,9 +124,91 @@ int sig_compare(char** files, int& mode, int& sig_size, int& matches, int& total
         throw std::runtime_error("ERR: Signature size " + to_string(sig_size) + " is bigger than smallest file size (" + to_string(smallest_sz) + " bytes)");
 
     total_sigs = 1 + (smallest_sz - sig_size);
+    cout << "total sigs: " << total_sigs << endl;
 
     switch (mode) {
-    case 0: { // normal
+    case 0: {
+        unordered_map<uint32_t, bool> sigs;
+        sigs.reserve(total_sigs);
+
+        ifstream reader(files[smallest_file], ios_base::binary);
+        
+        uint8_t c;
+        uint32_t hash;
+        
+        queue<uint8_t> hash_bytes;
+
+        for (int i = 0; i < smallest_sz; i++) {
+            reader >> c;
+
+            hash_bytes.push(c);
+            
+            hash = (i == 0) ? c : (hash ^ c);
+            hash = (hash << 1) | hash >> 31;
+
+            if (hash_bytes.size() == sig_size) {
+                sigs.insert({hash, false});
+
+                /*
+                cout << " added hash: " << hex << setfill('0') << setw(8) << (hash) << " | ";
+                queue<uint8_t> copy_queue = hash_bytes;
+
+                while (!copy_queue.empty()) {
+                    cout << hex << setfill('0') << setw(2) << (int)copy_queue.front() << ' ';
+                    copy_queue.pop();
+                }
+
+                cout << endl;
+                */
+
+                // remove first byte from hash and add new byte to hash
+                hash = (hash << 32 - sig_size) | (hash >> sig_size);
+                hash = hash ^ hash_bytes.front();
+                hash = (hash << sig_size) | (hash >> 32 - sig_size);
+
+                hash_bytes.pop();
+            }
+        }
+
+        reader.close();
+        hash_bytes = queue<uint8_t>();
+
+        cout << sigs.size() << " unique sigs found in " << total_sigs << " total sigs" << endl;
+
+        for (int i = 0; i < MAX_FILE_COUNT; i++) {
+            if (i == smallest_file) continue;
+
+            reader.open(files[i], ios_base::binary);
+
+            if (!reader.is_open())
+                throw runtime_error(string("ERR: Failed to open file ") + files[i]);
+
+            for (int j = 0; j < filesystem::file_size(files[i]); j++) {
+                reader >> c;
+
+                hash_bytes.push(c);
+
+                hash = (j == 0) ? c : (hash ^ c);
+                hash = (hash << 1) | hash >> 31;
+
+                if (hash_bytes.size() == sig_size) {
+                    if (sigs.contains(hash) && !sigs[hash]) {
+                        matches++;
+                        sigs[hash] = true;
+                    }
+
+                    // remove first byte from hash and add new byte to hash
+                    hash = (hash << 32 - sig_size) | (hash >> sig_size);
+                    hash = hash ^ hash_bytes.front();
+                    hash = (hash << sig_size) | (hash >> 32 - sig_size);
+
+                    hash_bytes.pop();
+                }
+            }
+
+            reader.close();
+        }
+        
         break;
     }
     case 1: { // async
@@ -125,7 +219,7 @@ int sig_compare(char** files, int& mode, int& sig_size, int& matches, int& total
     }
     }
 
-    return 0;
+    return matches;
 }
 
 int main(int argc, char** argv)
@@ -135,7 +229,7 @@ int main(int argc, char** argv)
     char* files[MAX_FILE_COUNT] = {nullptr, nullptr};
 
     auto end_program = []() {
-        std::getchar();
+        system("PAUSE");
         return 0;
     };
 
@@ -156,7 +250,8 @@ int main(int argc, char** argv)
     int matches = 0;
 
     try {
-        sig_compare(files, mode, sig_size, matches, total_sigs);
+        matches = sig_compare(files, mode, sig_size, total_sigs);
+        cout << "matches: " << matches << endl;
     }
     catch (std::runtime_error& e) {
         cout << e.what() << endl;
