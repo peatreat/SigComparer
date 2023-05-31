@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include <fstream>
 #include <queue>
+#include <future>
 
 using namespace std;
 
@@ -101,6 +102,61 @@ void handle_command_line(int argc, char** argv, int& sig_size, int& mode, char**
     }
 }
 
+unordered_set<uint32_t> get_sigs(char* file, int sig_size) {
+    unordered_set<uint32_t> sigs;
+    ifstream reader(file, ios_base::binary);
+
+    if (!reader.is_open())
+        throw runtime_error(string("ERR: Failed to open file ") + file);
+
+    uint8_t c;
+    uint32_t hash;
+
+    queue<uint8_t> hash_bytes;
+
+    reader.seekg(0, reader.end);
+    const auto end_pos = reader.tellg();
+    reader.seekg(0, reader.beg);
+    const auto sz = end_pos - reader.tellg();
+
+    for (int i = 0; i < sz; i++) {
+        reader >> c;
+
+        hash_bytes.push(c);
+
+        hash = (i == 0) ? c : (hash ^ c);
+        hash = (hash << 1) | hash >> 31;
+
+        if (hash_bytes.size() == sig_size) {
+
+            sigs.insert(hash);
+
+            /*
+            cout << " added hash: " << hex << setfill('0') << setw(8) << (hash) << " | ";
+            queue<uint8_t> copy_queue = hash_bytes;
+
+            while (!copy_queue.empty()) {
+                cout << hex << setfill('0') << setw(2) << (int)copy_queue.front() << ' ';
+                copy_queue.pop();
+            }
+
+            cout << endl;
+            */
+
+            // remove first byte from hash and add new byte to hash
+            hash = (hash << 32 - sig_size) | (hash >> sig_size);
+            hash = hash ^ hash_bytes.front();
+            hash = (hash << sig_size) | (hash >> 32 - sig_size);
+
+            hash_bytes.pop();
+        }
+    }
+
+    reader.close();
+
+    return sigs;
+}
+
 int sig_compare(char** files, int& mode, int& sig_size, int& total_sigs) {
     int matches = 0;
 
@@ -122,103 +178,40 @@ int sig_compare(char** files, int& mode, int& sig_size, int& total_sigs) {
     if (sig_size > biggest_sz)
         throw std::runtime_error("ERR: Signature size " + to_string(sig_size) + " is bigger than biggest file size (" + to_string(biggest_sz) + " bytes)");
 
-    total_sigs = 1 + (biggest_sz - sig_size);
-    cout << "total sigs: " << total_sigs << endl;
+    auto check_sigs = [&](unordered_set<uint32_t>& big_sigs, unordered_set<uint32_t>& small_sigs) {
+        for (unordered_set<uint32_t>::iterator it = big_sigs.begin(); it != big_sigs.end(); it++) {
+            if (small_sigs.contains(*it))
+                matches++;
+        }
+
+        total_sigs = big_sigs.size();
+    };
 
     switch (mode) {
     case 0: {
-        unordered_set<uint32_t> sigs;
+        unordered_set<uint32_t> big_sigs = get_sigs(files[biggest_file], sig_size);
+        unordered_set<uint32_t> small_sigs = get_sigs(files[!biggest_file], sig_size);
 
-        ifstream reader(files[biggest_file], ios_base::binary);
-        
-        uint8_t c;
-        uint32_t hash;
-        
-        queue<uint8_t> hash_bytes;
-
-        for (int i = 0; i < biggest_sz; i++) {
-            reader >> c;
-
-            hash_bytes.push(c);
-            
-            hash = (i == 0) ? c : (hash ^ c);
-            hash = (hash << 1) | hash >> 31;
-
-            if (hash_bytes.size() == sig_size) {
-                
-                sigs.insert(hash);
-
-                /*
-                cout << " added hash: " << hex << setfill('0') << setw(8) << (hash) << " | ";
-                queue<uint8_t> copy_queue = hash_bytes;
-
-                while (!copy_queue.empty()) {
-                    cout << hex << setfill('0') << setw(2) << (int)copy_queue.front() << ' ';
-                    copy_queue.pop();
-                }
-
-                cout << endl;
-                */
-
-                // remove first byte from hash and add new byte to hash
-                hash = (hash << 32 - sig_size) | (hash >> sig_size);
-                hash = hash ^ hash_bytes.front();
-                hash = (hash << sig_size) | (hash >> 32 - sig_size);
-
-                hash_bytes.pop();
-            }
-        }
-
-        reader.close();
-        hash_bytes = queue<uint8_t>();
-
-        cout << sigs.size() << " unique sigs foundd in " << total_sigs << " total sigs" << endl;
-
-        total_sigs = sigs.size();
-
-        for (int i = 0; i < MAX_FILE_COUNT; i++) {
-            if (i == biggest_file) continue;
-
-            reader.open(files[i], ios_base::binary);
-
-            if (!reader.is_open())
-                throw runtime_error(string("ERR: Failed to open file ") + files[i]);
-
-            reader.seekg(0, reader.end);
-            const auto end_pos = reader.tellg();
-            reader.seekg(0, reader.beg);
-            const auto sz = end_pos - reader.tellg();
-
-            for (int j = 0; j < sz; j++) {
-                reader >> c;
-
-                hash_bytes.push(c);
-
-                hash = (j == 0) ? c : (hash ^ c);
-                hash = (hash << 1) | hash >> 31;
-
-                if (hash_bytes.size() == sig_size) {
-                    auto it = sigs.find(hash);
-                    if (it != sigs.end()) {
-                        matches++;
-                        sigs.erase(it);
-                    }
-
-                    // remove first byte from hash and add new byte to hash
-                    hash = (hash << 32 - sig_size) | (hash >> sig_size);
-                    hash = hash ^ hash_bytes.front();
-                    hash = (hash << sig_size) | (hash >> 32 - sig_size);
-
-                    hash_bytes.pop();
-                }
-            }
-
-            reader.close();
-        }
+        check_sigs(big_sigs, small_sigs);
         
         break;
     }
     case 1: { // async
+        std::vector<std::future<unordered_set<uint32_t>>> futures;
+        futures.push_back(async(std::launch::async, get_sigs, files[0], sig_size));
+        futures.push_back(async(std::launch::async, get_sigs, files[1], sig_size));
+
+        std::vector<unordered_set<uint32_t>> results;
+
+        for (int i = 0; i < futures.size(); i++) {
+            results.push_back(futures[i].get());
+        }
+
+        unordered_set<uint32_t>& big_sigs = results[biggest_file];
+        unordered_set<uint32_t>& small_sigs = results[!biggest_file];
+
+        check_sigs(big_sigs, small_sigs);
+
         break;
     }
     default: {
