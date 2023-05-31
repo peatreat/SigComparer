@@ -2,7 +2,7 @@
 #include <iostream>
 #include <string>
 #include <filesystem>
-#include <unordered_map>
+#include <unordered_set>
 #include <fstream>
 #include <queue>
 
@@ -102,11 +102,10 @@ void handle_command_line(int argc, char** argv, int& sig_size, int& mode, char**
 }
 
 int sig_compare(char** files, int& mode, int& sig_size, int& total_sigs) {
-    Sleep(5000);
     int matches = 0;
 
-    int smallest_file = -1;
-    uintmax_t smallest_sz = 0;
+    int biggest_file = -1;
+    uintmax_t biggest_sz = 0;
 
     for (int i = 0; i < MAX_FILE_COUNT; i++) {
         if (!filesystem::exists(files[i]))
@@ -114,31 +113,30 @@ int sig_compare(char** files, int& mode, int& sig_size, int& total_sigs) {
 
         uintmax_t cur_sz = filesystem::file_size(files[i]);
 
-        if (smallest_file == -1 || cur_sz < smallest_sz) {
-            smallest_file = i;
-            smallest_sz = cur_sz;
+        if (biggest_file == -1 || cur_sz > biggest_sz) {
+            biggest_file = i;
+            biggest_sz = cur_sz;
         }
     }
 
-    if (sig_size > smallest_sz)
-        throw std::runtime_error("ERR: Signature size " + to_string(sig_size) + " is bigger than smallest file size (" + to_string(smallest_sz) + " bytes)");
+    if (sig_size > biggest_sz)
+        throw std::runtime_error("ERR: Signature size " + to_string(sig_size) + " is bigger than biggest file size (" + to_string(biggest_sz) + " bytes)");
 
-    total_sigs = 1 + (smallest_sz - sig_size);
+    total_sigs = 1 + (biggest_sz - sig_size);
     cout << "total sigs: " << total_sigs << endl;
 
     switch (mode) {
     case 0: {
-        unordered_map<uint32_t, bool> sigs;
-        sigs.reserve(total_sigs);
+        unordered_set<uint32_t> sigs;
 
-        ifstream reader(files[smallest_file], ios_base::binary);
+        ifstream reader(files[biggest_file], ios_base::binary);
         
         uint8_t c;
         uint32_t hash;
         
         queue<uint8_t> hash_bytes;
 
-        for (int i = 0; i < smallest_sz; i++) {
+        for (int i = 0; i < biggest_sz; i++) {
             reader >> c;
 
             hash_bytes.push(c);
@@ -147,7 +145,8 @@ int sig_compare(char** files, int& mode, int& sig_size, int& total_sigs) {
             hash = (hash << 1) | hash >> 31;
 
             if (hash_bytes.size() == sig_size) {
-                sigs.insert({hash, false});
+                
+                sigs.insert(hash);
 
                 /*
                 cout << " added hash: " << hex << setfill('0') << setw(8) << (hash) << " | ";
@@ -173,17 +172,24 @@ int sig_compare(char** files, int& mode, int& sig_size, int& total_sigs) {
         reader.close();
         hash_bytes = queue<uint8_t>();
 
-        cout << sigs.size() << " unique sigs found in " << total_sigs << " total sigs" << endl;
+        cout << sigs.size() << " unique sigs foundd in " << total_sigs << " total sigs" << endl;
+
+        total_sigs = sigs.size();
 
         for (int i = 0; i < MAX_FILE_COUNT; i++) {
-            if (i == smallest_file) continue;
+            if (i == biggest_file) continue;
 
             reader.open(files[i], ios_base::binary);
 
             if (!reader.is_open())
                 throw runtime_error(string("ERR: Failed to open file ") + files[i]);
 
-            for (int j = 0; j < filesystem::file_size(files[i]); j++) {
+            reader.seekg(0, reader.end);
+            const auto end_pos = reader.tellg();
+            reader.seekg(0, reader.beg);
+            const auto sz = end_pos - reader.tellg();
+
+            for (int j = 0; j < sz; j++) {
                 reader >> c;
 
                 hash_bytes.push(c);
@@ -192,9 +198,10 @@ int sig_compare(char** files, int& mode, int& sig_size, int& total_sigs) {
                 hash = (hash << 1) | hash >> 31;
 
                 if (hash_bytes.size() == sig_size) {
-                    if (sigs.contains(hash) && !sigs[hash]) {
+                    auto it = sigs.find(hash);
+                    if (it != sigs.end()) {
                         matches++;
-                        sigs[hash] = true;
+                        sigs.erase(it);
                     }
 
                     // remove first byte from hash and add new byte to hash
