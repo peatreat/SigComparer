@@ -47,7 +47,7 @@ int handle_flag(flag_e& flag, char** argv, int& i) {
 
     case flag_e::ERR:
     default: {
-        throw std::runtime_error(std::string("ERROR: Unknown flag ") + argv[i]);
+        throw runtime_error(string("ERROR: Unknown flag ") + argv[i]);
     }
     }
 
@@ -67,14 +67,14 @@ void handle_command_line(int argc, char** argv, int& sig_size, int& mode, char**
                 switch (flag) {
                 case flag_e::SIG_SIZE: {
                     if (flag_val < 0 || flag_val > 64)
-                        throw std::runtime_error("ERR: Signature size must be between 1-64 inclusive");
+                        throw runtime_error("ERR: Signature size must be between 1-64 inclusive");
 
                     sig_size = flag_val;
                     break;
                 }
                 case flag_e::MODE: {
                     if (flag_val < 0 || flag_val > 1)
-                        throw std::runtime_error("ERR: Mode must only be 0 or 1");
+                        throw runtime_error("ERR: Mode must only be 0 or 1");
 
                     mode = flag_val;
                     break;
@@ -83,11 +83,11 @@ void handle_command_line(int argc, char** argv, int& sig_size, int& mode, char**
                     break;
                 }
             }
-            catch (std::invalid_argument& e) {
-                throw std::runtime_error(string("ERR: Failed to parse integer ") + argv[i]);
+            catch (invalid_argument& e) {
+                throw runtime_error(string("ERR: Failed to parse integer ") + argv[i]);
             }
-            catch (std::out_of_range& e) {
-                throw std::runtime_error(string("ERR: Failed to parse integer ") + argv[i]);
+            catch (out_of_range& e) {
+                throw runtime_error(string("ERR: Failed to parse integer ") + argv[i]);
             }
 
             continue;
@@ -95,7 +95,7 @@ void handle_command_line(int argc, char** argv, int& sig_size, int& mode, char**
 
         // if no flag then it is a file input
         if (file_count == MAX_FILE_COUNT)
-            throw std::runtime_error("ERR: Max File Limit Exceeded (" + to_string(MAX_FILE_COUNT) + ')');
+            throw runtime_error("ERR: Max File Limit Exceeded (" + to_string(MAX_FILE_COUNT) + ')');
 
         files[file_count] = argv[i];
         file_count++;
@@ -114,40 +114,33 @@ unordered_set<uint32_t> get_sigs(char* file, int sig_size) {
 
     queue<uint8_t> hash_bytes;
 
+    // get file size
     reader.seekg(0, reader.end);
     const auto end_pos = reader.tellg();
     reader.seekg(0, reader.beg);
     const auto sz = end_pos - reader.tellg();
 
     for (int i = 0; i < sz; i++) {
-        reader >> c;
+        reader >> c; // read 1 byte from file to variable "c"
 
-        hash_bytes.push(c);
+        hash_bytes.push(c); // keep track of last n bytes where n = sig_size
 
+        // hashing: initialize with first byte value else xor hash with next byte
         hash = (i == 0) ? c : (hash ^ c);
+
+        // shift hash 1 bit to the left
         hash = (hash << 1) | hash >> 31;
 
         if (hash_bytes.size() == sig_size) {
-
+            // add hash to unordered set
             sigs.insert(hash);
-
-            /*
-            cout << " added hash: " << hex << setfill('0') << setw(8) << (hash) << " | ";
-            queue<uint8_t> copy_queue = hash_bytes;
-
-            while (!copy_queue.empty()) {
-                cout << hex << setfill('0') << setw(2) << (int)copy_queue.front() << ' ';
-                copy_queue.pop();
-            }
-
-            cout << endl;
-            */
 
             // remove first byte from hash and add new byte to hash
             hash = (hash << 32 - sig_size) | (hash >> sig_size);
             hash = hash ^ hash_bytes.front();
             hash = (hash << sig_size) | (hash >> 32 - sig_size);
 
+            // get rid of the first byte, it's no longer needed
             hash_bytes.pop();
         }
     }
@@ -176,7 +169,7 @@ int sig_compare(char** files, int& mode, int& sig_size, int& total_sigs) {
     }
 
     if (sig_size > biggest_sz)
-        throw std::runtime_error("ERR: Signature size " + to_string(sig_size) + " is bigger than biggest file size (" + to_string(biggest_sz) + " bytes)");
+        throw runtime_error("ERR: Signature size " + to_string(sig_size) + " is bigger than biggest file size (" + to_string(biggest_sz) + " bytes)");
 
     auto check_sigs = [&](unordered_set<uint32_t>& big_sigs, unordered_set<uint32_t>& small_sigs) {
         for (unordered_set<uint32_t>::iterator it = big_sigs.begin(); it != big_sigs.end(); it++) {
@@ -197,11 +190,11 @@ int sig_compare(char** files, int& mode, int& sig_size, int& total_sigs) {
         break;
     }
     case 1: { // async
-        std::vector<std::future<unordered_set<uint32_t>>> futures;
-        futures.push_back(async(std::launch::async, get_sigs, files[0], sig_size));
-        futures.push_back(async(std::launch::async, get_sigs, files[1], sig_size));
+        vector<future<unordered_set<uint32_t>>> futures;
+        futures.push_back(async(launch::async, get_sigs, files[0], sig_size));
+        futures.push_back(async(launch::async, get_sigs, files[1], sig_size));
 
-        std::vector<unordered_set<uint32_t>> results;
+        vector<unordered_set<uint32_t>> results;
 
         for (int i = 0; i < futures.size(); i++) {
             results.push_back(futures[i].get());
@@ -215,7 +208,7 @@ int sig_compare(char** files, int& mode, int& sig_size, int& total_sigs) {
         break;
     }
     default: {
-        throw std::runtime_error("ERR: Unrecognized mode selected " + to_string(mode));
+        throw runtime_error("ERR: Unrecognized mode selected " + to_string(mode));
     }
     }
 
@@ -228,39 +221,25 @@ int main(int argc, char** argv)
     int mode = 0;
     char* files[MAX_FILE_COUNT] = {nullptr, nullptr};
 
-    auto end_program = []() {
-        system("PAUSE");
-        return 0;
-    };
-
-    try {
-        handle_command_line(argc, argv, sig_size, mode, files);
-    }
-    catch (runtime_error& e) {
-        cout << e.what() << endl;
-        return end_program();
-    }
-
-    if (!files[0] || !files[1]) {
-        cout << "ERR: You must enter " << MAX_FILE_COUNT << " file names for comparison" << endl;
-        return end_program();
-    }
-
     int total_sigs = 0;
     int matches = 0;
 
     try {
+        handle_command_line(argc, argv, sig_size, mode, files);
+
+        if (!files[0] || !files[1])
+            throw runtime_error("ERR: You must enter " + to_string(MAX_FILE_COUNT) + " file names for comparison");
+
         matches = sig_compare(files, mode, sig_size, total_sigs);
-        cout << "matches: " << matches << endl;
     }
-    catch (std::runtime_error& e) {
+    catch (runtime_error& e) {
         cout << e.what() << endl;
-        return end_program();
+        return 0;
     }
 
     float match_percent = (float(matches) / total_sigs) * 100.f;
 
-    cout << "The " << MAX_FILE_COUNT << " are " << match_percent << setprecision(2) << "% simmilar. " << matches << " sigs found out of " << total_sigs << " sigs between the " << MAX_FILE_COUNT << " files." << endl;
+    cout << "The " << MAX_FILE_COUNT << " files are " << fixed << setprecision(2) << match_percent << "% simmilar. " << matches << " sigs found out of " << total_sigs << " sigs between the " << MAX_FILE_COUNT << " files." << endl;
 
-    return end_program();
+    return 0;
 }
