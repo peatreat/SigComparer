@@ -145,6 +145,11 @@
   <ItemGroup>
     <ClCompile Include="SigComparer.cpp" />
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="cmd_line.h" />
+    <ClInclude Include="globals.h" />
+    <ClInclude Include="sig.h" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
