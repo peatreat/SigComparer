@@ -29,10 +29,10 @@ struct compare_data_t {
     int biggest_file;
     size_t matches;
     size_t total_sigs;
-    vector<pair<size_t, pair<unordered_set<size_t>, uint32_t>>> sigs;
+    vector<pair<size_t, pair<unordered_set<size_t>, size_t>>> sigs;
 };
 
 struct sig_data_t {
-    unordered_map<size_t, pair<unordered_set<size_t>, uint32_t>> sigs;
+    unordered_map<size_t, pair<unordered_set<size_t>, size_t>> sigs;
     size_t bytes_found;
 };

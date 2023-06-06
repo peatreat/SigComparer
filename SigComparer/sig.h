@@ -7,8 +7,8 @@
 #include <string>
 #include <fstream>
 
-sig_data_t get_sigs(void* file, int sig_size, bool async, unordered_map<size_t, pair<unordered_set<size_t>, uint32_t>>* other = nullptr) {
-    unordered_map<size_t, pair<unordered_set<size_t>, uint32_t>> sigs;
+sig_data_t get_sigs(void* file, int sig_size, bool async, unordered_map<size_t, pair<unordered_set<size_t>, size_t>>* other = nullptr) {
+    unordered_map<size_t, pair<unordered_set<size_t>, size_t>> sigs;
 
     char* filename = nullptr;    
     atomic<float>* progress = nullptr;
@@ -42,7 +42,7 @@ sig_data_t get_sigs(void* file, int sig_size, bool async, unordered_map<size_t, 
     unordered_set<size_t> start_hash_offsets;
 
     size_t start_hash_off = 0;
-    uint32_t adjacent_hashes = 0;
+    size_t adjacent_hashes = 0;
 
     size_t bytes_found = 0;
     size_t skip_bytes = 0;
@@ -53,7 +53,7 @@ sig_data_t get_sigs(void* file, int sig_size, bool async, unordered_map<size_t, 
         hash.add(byte); // process byte with hashing object
 
         if (progress)
-            *progress = (float)i / (sz-1);
+            *progress = (float)i / (sz - 1);
 
         if (skip_bytes) {
             skip_bytes--;
@@ -62,6 +62,10 @@ sig_data_t get_sigs(void* file, int sig_size, bool async, unordered_map<size_t, 
 
         if (hash.size() == sig_size) { // only start adding sigs after we have processed a minimum of sig_size bytes into the hash
             if (!other) {
+                // if we are async then only add a 1 sig for each hash
+                if (async && sigs.contains(hash.get()))
+                    continue;
+
                 // if no set of sigs was passed to compare with then generate a set of sigs for each hash
                 auto& sig = sigs[hash.get()];
                 sig.first.insert(i - (sig_size - 1));
@@ -100,9 +104,9 @@ sig_data_t get_sigs(void* file, int sig_size, bool async, unordered_map<size_t, 
                             *  it found out that the current hash is not adjacent to the previous ones.
                             *  it will now insert a sig for only the adjacent bytes previous to this one
                             */
-                            sigs.insert({ (uint32_t)start_hash_off, { { start_hash_off }, uint32_t(i - start_hash_off) } });
+                            sigs.insert({ start_hash_off, { { start_hash_off }, i - start_hash_off } });
 
-                            bytes_found += size_t(i - start_hash_off);
+                            bytes_found += i - start_hash_off;
                             skip_bytes += sig_size - 1; // skip enough bytes to get the hash of the first sig_size bytes after the previous adjacent block.
                             adjacent_hashes = 0; // reset adjacent_hashes so we know that the next hash found is the start of its own sig
                             continue;
@@ -125,9 +129,9 @@ sig_data_t get_sigs(void* file, int sig_size, bool async, unordered_map<size_t, 
                     /*
                     *  ran into a hash that is not in the other file. lets add the sig we have built up to this point to our map.
                     */
-                    sigs.insert({ (uint32_t)start_hash_off, { { start_hash_off }, uint32_t(i - start_hash_off)}});
+                    sigs.insert({ start_hash_off, { { start_hash_off }, i - start_hash_off } });
 
-                    bytes_found += size_t(i - start_hash_off);
+                    bytes_found += i - start_hash_off;
                     skip_bytes += sig_size - 1; // skip enough bytes to get the hash of the first sig_size bytes after the previous adjacent block.
                     adjacent_hashes = 0; // reset adjacent_hashes so we know that the next hash found is the start of its own sig
                 }
@@ -139,8 +143,8 @@ sig_data_t get_sigs(void* file, int sig_size, bool async, unordered_map<size_t, 
         /*
         *  this sig goes to the end of the file and was not handled in the for loop so we are going to handle it here
         */
-        sigs.insert({ start_hash_off, { { start_hash_off }, uint32_t(sz - start_hash_off) } });
-        bytes_found += size_t(sz - start_hash_off);
+        sigs.insert({ start_hash_off, { { start_hash_off }, sz - start_hash_off } });
+        bytes_found += sz - start_hash_off;
     }
 
     reader.close();
@@ -175,7 +179,10 @@ compare_data_t sig_compare(pair<char**, atomic<float>*> files, int mode, int sig
         auto big_sigs = get_sigs(&big_file_data, sig_size, false);
         auto small_sigs = get_sigs(&small_file_data, sig_size, false, &big_sigs.sigs);
 
-        return { biggest_file, small_sigs.bytes_found, biggest_sz, vector<pair<size_t, pair<unordered_set<size_t>, uint32_t>>>(small_sigs.sigs.begin(), small_sigs.sigs.end()) };
+        big_file_data.second = 1.f;
+        small_file_data.second = 1.f;
+
+        return { biggest_file, small_sigs.bytes_found, biggest_sz, vector<pair<size_t, pair<unordered_set<size_t>, size_t>>>(small_sigs.sigs.begin(), small_sigs.sigs.end()) };
     }
     case 1: { // async
         vector<future<sig_data_t>> futures;
@@ -192,7 +199,7 @@ compare_data_t sig_compare(pair<char**, atomic<float>*> files, int mode, int sig
         auto& big_sigs = results[biggest_file].sigs;
         auto& small_sigs = results[!biggest_file].sigs;
         
-        vector<pair<size_t, pair<unordered_set<size_t>, uint32_t>>> sigs;
+        vector<pair<size_t, pair<unordered_set<size_t>, size_t>>> sigs;
 
         for (auto it = big_sigs.begin(); it != big_sigs.end(); it++) {
             auto pos = small_sigs.find(it->first);

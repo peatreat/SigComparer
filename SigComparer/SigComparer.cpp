@@ -68,7 +68,7 @@ int main(int argc, char** argv)
             ofstream output(out_filename, ios::out);
 
             if (output.is_open()) {
-                auto comp = [&](pair<size_t, pair<unordered_set<size_t>, uint32_t>>& a, pair<size_t, pair<unordered_set<size_t>, uint32_t>>& b)-> bool {
+                auto comp = [&](pair<size_t, pair<unordered_set<size_t>, size_t>>& a, pair<size_t, pair<unordered_set<size_t>, size_t>>& b)-> bool {
                     return input.sort < 2 ? (input.sort == 0 ? a.second.second > b.second.second : a.second.second < b.second.second) : (input.sort == 2 ? *a.second.first.begin() > *b.second.first.begin() : *a.second.first.begin() < *b.second.first.begin()); //or use paramA in some way
                 };
 
