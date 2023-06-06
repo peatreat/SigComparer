@@ -29,5 +29,11 @@
     <ClInclude Include="sig.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="utils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="hash.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
